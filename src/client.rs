@@ -61,47 +61,51 @@ impl Client {
             });
         let mut resp = req
             .send()
-            .map_err(|_| Error::new("Could not send request to server"))?;
+            .map_err(|_| Error::new("Could not send handshake request to server"))?;
         let body = resp
             .text()
-            .map_err(|_| Error::new("Could not get the response body"))?;
+            .map_err(|_| Error::new("Could not get the handshake response body"))?;
         let cookies = resp
             .cookies()
             .map(|c| c.value().to_owned())
             .collect::<Vec<_>>();
 
-        if let Ok(vals) = serde_json::from_str::<Vec<HandshakeResponse>>(&body) {
-            if let Some(val) = vals.get(0) {
-                self.client_id = Some(val.client_id.clone());
-                self.cookies = cookies;
-            }
+        match serde_json::from_str::<Vec<HandshakeResponse>>(&body) {
+            Ok(vals) => match vals.get(0) {
+                Some(val) => {
+                    self.client_id = Some(val.client_id.clone());
+                    self.cookies = cookies;
+                    Ok(())
+                }
+                None => Err(Error::new("Could not get client id from handshake")),
+            },
+            Err(_) => Err(Error::new("Could not get client id from handshake")),
         }
-
-        Ok(())
     }
 
     fn connect(&self) -> Result<(), Error> {
-        if let Some(client_id) = &self.client_id {
-            let mut req = self
-                .http_client
-                .post(self.base_url.clone())
-                .header("Authorization", &format!("OAuth {}", self.access_token));
+        match &self.client_id {
+            Some(client_id) => {
+                let mut req = self
+                    .http_client
+                    .post(self.base_url.clone())
+                    .header("Authorization", &format!("OAuth {}", self.access_token));
 
-            for ref cookie in self.cookies.iter() {
-                req = req.header(reqwest::header::SET_COOKIE, cookie.clone());
+                for ref cookie in self.cookies.iter() {
+                    req = req.header(reqwest::header::SET_COOKIE, cookie.clone());
+                }
+
+                req.json(&ConnectPayload {
+                    channel: "/meta/connect",
+                    client_id: &client_id,
+                    connection_type: "long-polling",
+                })
+                .send()
+                .map_err(|_| Error::new("Could not send connect request to server"))?;
+
+                Ok(())
             }
-
-            let req = req.json(&ConnectPayload {
-                channel: "/meta/connect",
-                client_id: &client_id,
-                connection_type: "long-polling",
-            });
-            let mut resp = req.send().expect("Could not send req");
-
-            println!("CONNECT BODY: {:#?}", resp.text());
-            Ok(())
-        } else {
-            Err(Error::new("No client id set for connect"))
+            None => Err(Error::new("No client id set for connect")),
         }
     }
 
