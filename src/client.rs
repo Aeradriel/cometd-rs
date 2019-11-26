@@ -1,6 +1,8 @@
-use crate::error::Error;
 use reqwest::{Client as ReqwestClient, Url};
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
+
+use crate::error::Error;
 
 pub struct Client {
     pub http_client: ReqwestClient,
@@ -32,11 +34,20 @@ struct ConnectPayload<'a> {
     connection_type: &'a str,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SubscribeTopicPayload {
+    pub channel: String,
+    pub client_id: String,
+    pub subscription: String,
+}
+
 impl Client {
-    pub fn new(base_url: &str, access_token: &str) -> Result<Client, Error> {
+    pub fn new(base_url: &str, access_token: &str, timeout: Duration) -> Result<Client, Error> {
         let url = Url::parse(base_url).map_err(|_| Error::new("Could not parse base url"))?;
         let http_client = ReqwestClient::builder()
             .cookie_store(true)
+            .timeout(timeout)
             .build()
             .map_err(|_| Error::new("Could not initialize http client"))?;
 
@@ -83,7 +94,7 @@ impl Client {
         }
     }
 
-    fn connect(&self) -> Result<(), Error> {
+    pub fn connect(&self) -> Result<(), Error> {
         match &self.client_id {
             Some(client_id) => {
                 let mut req = self
@@ -113,5 +124,31 @@ impl Client {
         self.handshake()?;
         self.connect()?;
         Ok(())
+    }
+
+    pub fn subscribe(&mut self, sub: &str) -> Result<(), Error> {
+        match &self.client_id {
+            Some(client_id) => {
+                let mut req = self
+                    .http_client
+                    .post(self.base_url.clone())
+                    .header("Authorization", &format!("Bearer {}", self.access_token));
+
+                for cookie in &self.cookies {
+                    req = req.header(reqwest::header::SET_COOKIE, cookie);
+                }
+
+                req = req.json(&SubscribeTopicPayload {
+                    channel: "/meta/subscribe".to_owned(),
+                    client_id: client_id.to_owned(),
+                    subscription: sub.to_owned(),
+                });
+                req.send()
+                    .map_err(|_| Error::new("Could not send subscribe request to server"))?;
+
+                Ok(())
+            }
+            None => Err(Error::new("No client id set for subscribe")),
+        }
     }
 }
