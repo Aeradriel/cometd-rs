@@ -1,8 +1,9 @@
-use reqwest::{Client as ReqwestClient, Url};
-use serde::{Deserialize, Serialize};
+use reqwest::{Client as ReqwestClient, Response as ReqwestReponse, Url};
+use serde::Serialize;
 use std::time::Duration;
 
 use crate::error::Error;
+use crate::response::Response;
 
 pub struct Client {
     pub http_client: ReqwestClient,
@@ -18,12 +19,6 @@ struct HandshakePayload<'a> {
     channel: &'a str,
     version: &'a str,
     supported_connection_types: Vec<&'a str>,
-}
-
-#[derive(Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-struct HandshakeResponse {
-    client_id: String,
 }
 
 #[derive(Serialize)]
@@ -60,7 +55,35 @@ impl Client {
         })
     }
 
-    fn handshake(&mut self) -> Result<(), Error> {
+    fn handle_response(&mut self, mut resp: ReqwestReponse) -> Result<Vec<Response>, Error> {
+        let body = resp
+            .text()
+            .map_err(|_| Error::new("Could not get the response body"))?;
+        let cookies = resp
+            .cookies()
+            .map(|c| c.value().to_owned())
+            .collect::<Vec<_>>();
+
+        // TODO: Retry if needed
+        // TODO: Handshake if needed
+        match serde_json::from_str::<Vec<Response>>(&body) {
+            Ok(resps) => {
+                let mut responses = vec![];
+
+                for resp in resps.into_iter() {
+                    if let Response::Handshake(ref resp) = resp {
+                        self.client_id = Some(resp.client_id.clone());
+                        self.cookies = cookies.clone();
+                    }
+                    responses.push(resp);
+                }
+                Ok(responses)
+            }
+            Err(_) => Err(Error::new("Could not parse response")),
+        }
+    }
+
+    fn handshake(&mut self) -> Result<Vec<Response>, Error> {
         let req = self
             .http_client
             .post(self.base_url.clone())
@@ -70,31 +93,14 @@ impl Client {
                 version: "1.0",
                 supported_connection_types: vec!["long-polling"],
             });
-        let mut resp = req
+        let resp = req
             .send()
             .map_err(|_| Error::new("Could not send handshake request to server"))?;
-        let body = resp
-            .text()
-            .map_err(|_| Error::new("Could not get the handshake response body"))?;
-        let cookies = resp
-            .cookies()
-            .map(|c| c.value().to_owned())
-            .collect::<Vec<_>>();
 
-        match serde_json::from_str::<Vec<HandshakeResponse>>(&body) {
-            Ok(vals) => match vals.get(0) {
-                Some(val) => {
-                    self.client_id = Some(val.client_id.clone());
-                    self.cookies = cookies;
-                    Ok(())
-                }
-                None => Err(Error::new("Could not get client id from handshake")),
-            },
-            Err(_) => Err(Error::new("Could not get client id from handshake")),
-        }
+        self.handle_response(resp)
     }
 
-    pub fn connect(&self) -> Result<(), Error> {
+    pub fn connect(&mut self) -> Result<Vec<Response>, Error> {
         match &self.client_id {
             Some(client_id) => {
                 let mut req = self
@@ -106,27 +112,30 @@ impl Client {
                     req = req.header(reqwest::header::SET_COOKIE, cookie.clone());
                 }
 
-                req.json(&ConnectPayload {
-                    channel: "/meta/connect",
-                    client_id: &client_id,
-                    connection_type: "long-polling",
-                })
-                .send()
-                .map_err(|_| Error::new("Could not send connect request to server"))?;
+                let resp = req
+                    .json(&ConnectPayload {
+                        channel: "/meta/connect",
+                        client_id: &client_id,
+                        connection_type: "long-polling",
+                    })
+                    .send()
+                    .map_err(|_| Error::new("Could not send connect request to server"))?;
 
-                Ok(())
+                self.handle_response(resp)
             }
             None => Err(Error::new("No client id set for connect")),
         }
     }
 
-    pub fn init(&mut self) -> Result<(), Error> {
-        self.handshake()?;
-        self.connect()?;
-        Ok(())
+    pub fn init(&mut self) -> Result<Vec<Response>, Error> {
+        let mut responses = vec![];
+
+        responses.push(self.handshake()?);
+        responses.push(self.connect()?);
+        Ok(responses.into_iter().flatten().collect())
     }
 
-    pub fn subscribe(&mut self, sub: &str) -> Result<(), Error> {
+    pub fn subscribe(&mut self, sub: &str) -> Result<Vec<Response>, Error> {
         match &self.client_id {
             Some(client_id) => {
                 let mut req = self
@@ -143,10 +152,11 @@ impl Client {
                     client_id: client_id.to_owned(),
                     subscription: sub.to_owned(),
                 });
-                req.send()
+                let resp = req
+                    .send()
                     .map_err(|_| Error::new("Could not send subscribe request to server"))?;
 
-                Ok(())
+                self.handle_response(resp)
             }
             None => Err(Error::new("No client id set for subscribe")),
         }
