@@ -47,6 +47,7 @@ impl Client {
             .build()
             .map_err(|_| Error::new("Could not initialize http client"))?;
 
+        log::info!("Successfully created cometd client");
         Ok(Client {
             http_client: http_client,
             base_url: url,
@@ -67,10 +68,16 @@ impl Client {
             req = req.header(reqwest::header::SET_COOKIE, cookie.clone());
         }
 
+        log::info!(
+            "Sending request to cometd with the following body:\n{:#?}",
+            serde_json::to_string(body)
+        );
         req.send()
             .map_err(|_| Error::new("Could not send request to server"))
     }
 
+    // TODO: Retry if needed
+    // TODO: Handshake if needed
     fn handle_response(&mut self, mut resp: ReqwestReponse) -> Result<Vec<Response>, Error> {
         let body = resp
             .text()
@@ -80,8 +87,7 @@ impl Client {
             .map(|c| c.value().to_owned())
             .collect::<Vec<_>>();
 
-        // TODO: Retry if needed
-        // TODO: Handshake if needed
+        log::info!("Received response from cometd server:\n{:#?}", body);
         match serde_json::from_str::<Vec<Response>>(&body) {
             Ok(resps) => {
                 let mut responses = vec![];
@@ -129,6 +135,7 @@ impl Client {
 
         responses.push(self.handshake()?);
         responses.push(self.connect()?);
+        log::info!("Successfully init cometd client");
         Ok(responses.into_iter().flatten().collect())
     }
 
