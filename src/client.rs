@@ -31,12 +31,13 @@ struct ConnectPayload<'a> {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct SubscribeTopicPayload {
-    pub channel: String,
-    pub client_id: String,
-    pub subscription: String,
+struct SubscribeTopicPayload<'a> {
+    pub channel: &'a str,
+    pub client_id: &'a str,
+    pub subscription: &'a str,
 }
 
+// TODO: Logs
 impl Client {
     pub fn new(base_url: &str, access_token: &str, timeout: Duration) -> Result<Client, Error> {
         let url = Url::parse(base_url).map_err(|_| Error::new("Could not parse base url"))?;
@@ -53,6 +54,21 @@ impl Client {
             client_id: None,
             cookies: vec![],
         })
+    }
+
+    fn send_request(&self, body: &impl Serialize) -> Result<ReqwestReponse, Error> {
+        let mut req = self
+            .http_client
+            .post(self.base_url.clone())
+            .header("Authorization", &format!("OAuth {}", self.access_token))
+            .json(body);
+
+        for ref cookie in self.cookies.iter() {
+            req = req.header(reqwest::header::SET_COOKIE, cookie.clone());
+        }
+
+        req.send()
+            .map_err(|_| Error::new("Could not send request to server"))
     }
 
     fn handle_response(&mut self, mut resp: ReqwestReponse) -> Result<Vec<Response>, Error> {
@@ -84,18 +100,11 @@ impl Client {
     }
 
     fn handshake(&mut self) -> Result<Vec<Response>, Error> {
-        let req = self
-            .http_client
-            .post(self.base_url.clone())
-            .header("Authorization", &format!("OAuth {}", self.access_token))
-            .json(&HandshakePayload {
-                channel: "/meta/handshake",
-                version: "1.0",
-                supported_connection_types: vec!["long-polling"],
-            });
-        let resp = req
-            .send()
-            .map_err(|_| Error::new("Could not send handshake request to server"))?;
+        let resp = self.send_request(&HandshakePayload {
+            channel: "/meta/handshake",
+            version: "1.0",
+            supported_connection_types: vec!["long-polling"],
+        })?;
 
         self.handle_response(resp)
     }
@@ -103,23 +112,11 @@ impl Client {
     pub fn connect(&mut self) -> Result<Vec<Response>, Error> {
         match &self.client_id {
             Some(client_id) => {
-                let mut req = self
-                    .http_client
-                    .post(self.base_url.clone())
-                    .header("Authorization", &format!("OAuth {}", self.access_token));
-
-                for ref cookie in self.cookies.iter() {
-                    req = req.header(reqwest::header::SET_COOKIE, cookie.clone());
-                }
-
-                let resp = req
-                    .json(&ConnectPayload {
-                        channel: "/meta/connect",
-                        client_id: &client_id,
-                        connection_type: "long-polling",
-                    })
-                    .send()
-                    .map_err(|_| Error::new("Could not send connect request to server"))?;
+                let resp = self.send_request(&ConnectPayload {
+                    channel: "/meta/connect",
+                    client_id: &client_id,
+                    connection_type: "long-polling",
+                })?;
 
                 self.handle_response(resp)
             }
@@ -138,23 +135,11 @@ impl Client {
     pub fn subscribe(&mut self, sub: &str) -> Result<Vec<Response>, Error> {
         match &self.client_id {
             Some(client_id) => {
-                let mut req = self
-                    .http_client
-                    .post(self.base_url.clone())
-                    .header("Authorization", &format!("Bearer {}", self.access_token));
-
-                for cookie in &self.cookies {
-                    req = req.header(reqwest::header::SET_COOKIE, cookie);
-                }
-
-                req = req.json(&SubscribeTopicPayload {
-                    channel: "/meta/subscribe".to_owned(),
-                    client_id: client_id.to_owned(),
-                    subscription: sub.to_owned(),
-                });
-                let resp = req
-                    .send()
-                    .map_err(|_| Error::new("Could not send subscribe request to server"))?;
+                let resp = self.send_request(&SubscribeTopicPayload {
+                    channel: "/meta/subscribe",
+                    client_id: client_id,
+                    subscription: sub,
+                })?;
 
                 self.handle_response(resp)
             }
