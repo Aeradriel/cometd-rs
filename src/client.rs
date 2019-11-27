@@ -1,12 +1,11 @@
 use reqwest::{Client as ReqwestClient, Response as ReqwestReponse, Url};
 use serde::Serialize;
-use std::convert::TryInto;
 use std::time::Duration;
 
 use crate::advice::Reconnect;
 use crate::error::Error;
 use crate::request::Request;
-use crate::response::Response;
+use crate::response::{ErroredResponse, Response};
 
 pub struct Client {
     http_client: ReqwestClient,
@@ -61,6 +60,8 @@ impl Client {
         })
     }
 
+    /// Sets the number of retries the client will attempt in case of an error is
+    /// returned by the cometd server.
     pub fn set_retries(mut self, retries: i8) -> Self {
         self.retries = retries;
         self
@@ -85,9 +86,8 @@ impl Client {
             .map_err(|_| Error::new("Could not send request to server"))
     }
 
-    fn retry(&mut self, resp: &Response, retry: i8) -> Result<Vec<Response>, Error> {
-        let req: Request = resp.try_into()?;
-
+    fn retry(&mut self, resp: &ErroredResponse, retry: i8) -> Result<Vec<Response>, Error> {
+        let req: Request = resp.into();
         let resp = self.send_request(&req)?;
 
         log::info!("Retrying attempt n°{} for {:#?}", retry + 1, req);
@@ -97,10 +97,11 @@ impl Client {
     /// Handles the error returned by the cometd server. If possible, it will
     /// automatically retry according to the client configuration. If it still
     /// fails after the retries, the original error will be returned.
-    fn handle_error(&mut self, resp: &Response, retry: i8) -> Result<Vec<Response>, Error> {
-        match resp.advice() {
-            Some(advice) => {
+    fn handle_error(&mut self, resp: &ErroredResponse, retry: i8) -> Result<Vec<Response>, Error> {
+        match resp.advice {
+            Some(ref advice) => {
                 match advice.reconnect {
+                    // TODO: Make retry and hanshake act differently
                     Reconnect::Retry | Reconnect::Handshake => {
                         if retry < self.retries {
                             match self.retry(resp, retry) {
@@ -108,32 +109,18 @@ impl Client {
                                 Err(err) => Err(err),
                             }
                         } else {
-                            let error = match resp.error() {
-                                Some(err) => err,
-                                None => "Response was unsuccessful even after retries".to_owned(),
-                            };
-
-                            Err(Error::new(&error))
+                            Err(Error::new(&resp.error))
                         }
                     }
                     Reconnect::None => {
-                        let error = match resp.error() {
-                        Some(err) => err,
-                        None => "Response was unsuccessful and the server indicated not to retry nor handshake".to_owned(),
-                    };
-
                         log::info!("Not retrying because the server answered not to reconnect nor handshake");
-                        Err(Error::new(&error))
+                        Err(Error::new(&resp.error))
                     }
                 }
             }
             None => {
-                let error = match resp.error() {
-                    Some(err) => err,
-                    None => "Response was unsuccessful and no advice was provided".to_owned(),
-                };
-
-                Err(Error::new(&error))
+                log::info!("Not retrying because the server did not provide advice");
+                Err(Error::new(&resp.error))
             }
         }
     }
@@ -150,38 +137,41 @@ impl Client {
             .cookies()
             .map(|c| c.value().to_owned())
             .collect::<Vec<_>>();
+        let mut responses = vec![];
 
         log::info!("Received response from cometd server:\n{:#?}", body);
-        match serde_json::from_str::<Vec<Response>>(&body) {
+        match serde_json::from_str::<Vec<ErroredResponse>>(&body) {
             Ok(resps) => {
-                let mut responses = vec![];
-
                 for resp in resps.into_iter() {
-                    if resp.successful() {
-                        if let Response::Handshake(ref resp) = resp {
-                            self.client_id = Some(resp.client_id.clone().ok_or(Error::new(
-                                "Handshake was successful but not client id was provided",
-                            ))?);
-                            self.cookies = cookies.clone();
-                        }
-                        responses.push(resp);
-                    } else {
-                        let resps = self.handle_error(&resp, retry)?;
+                    let resps = self.handle_error(&resp, retry)?;
 
-                        for resp in resps.into_iter() {
-                            responses.push(resp);
-                        }
+                    for resp in resps.into_iter() {
+                        responses.push(resp);
                     }
                 }
                 Ok(responses)
             }
-            Err(_) => {
-                log::error!(
-                    "Handle response failed with the following server response:\n{:#?}",
-                    body
-                );
-                Err(Error::new("Could not parse response"))
-            }
+            Err(_) => match serde_json::from_str::<Vec<Response>>(&body) {
+                Ok(resps) => {
+                    let mut responses = vec![];
+
+                    for resp in resps.into_iter() {
+                        if let Response::Handshake(ref resp) = resp {
+                            self.client_id = Some(resp.client_id.clone());
+                            self.cookies = cookies.clone();
+                        }
+                        responses.push(resp);
+                    }
+                    Ok(responses)
+                }
+                Err(_) => {
+                    log::error!(
+                        "Handle response failed with the following server response:\n{:#?}",
+                        body
+                    );
+                    Err(Error::new("Could not parse response"))
+                }
+            },
         }
     }
 
