@@ -2,7 +2,6 @@ use serde::Deserialize;
 
 use crate::advice::Advice;
 use crate::config::{COMETD_SUPPORTED_TYPES, COMETD_VERSION};
-use crate::error::Error;
 use crate::request::Request;
 
 #[derive(Deserialize, PartialEq, Debug)]

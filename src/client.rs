@@ -3,6 +3,7 @@ use serde::Serialize;
 use std::time::Duration;
 
 use crate::advice::Reconnect;
+use crate::config::{COMETD_SUPPORTED_TYPES, COMETD_VERSION};
 use crate::error::Error;
 use crate::request::Request;
 use crate::response::{ErroredResponse, Response};
@@ -178,8 +179,8 @@ impl Client {
     fn handshake(&mut self) -> Result<Vec<Response>, Error> {
         let resp = self.send_request(&HandshakePayload {
             channel: "/meta/handshake",
-            version: "1.0",
-            supported_connection_types: vec!["long-polling"],
+            version: COMETD_VERSION,
+            supported_connection_types: COMETD_SUPPORTED_TYPES.to_vec(),
         })?;
 
         self.handle_response(resp, 0)
