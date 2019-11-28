@@ -35,6 +35,13 @@ struct ConnectPayload<'a> {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct DisconnectPayload<'a> {
+    channel: &'a str,
+    client_id: &'a str,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct SubscribeTopicPayload<'a> {
     pub channel: &'a str,
     pub client_id: &'a str,
@@ -238,6 +245,20 @@ impl Client {
 
         self.actual_retries = 0;
         resps
+    }
+
+    pub fn disconnect(&mut self) -> Result<Vec<Response>, Error> {
+        match &self.client_id {
+            Some(client_id) => {
+                let resp = self.send_request(&DisconnectPayload {
+                    channel: "/meta/disconnect",
+                    client_id,
+                })?;
+
+                self.handle_response(resp)
+            }
+            None => Err(Error::new("No client id set for disconnect")),
+        }
     }
 
     pub fn init(&mut self) -> Result<Vec<Response>, Error> {

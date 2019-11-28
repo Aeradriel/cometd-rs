@@ -4,7 +4,7 @@ use crate::advice::Advice;
 
 #[derive(Deserialize, PartialEq, Debug)]
 #[serde(rename_all = "camelCase")]
-pub struct ConnectResponse {
+pub struct BasicResponse {
     pub channel: String,
     pub successful: bool,
     pub error: Option<String>,
@@ -57,7 +57,7 @@ pub struct PublishResponse {
 pub enum Response {
     Handshake(HandshakeResponse),
     Publish(PublishResponse),
-    Connect(ConnectResponse),
+    Basic(BasicResponse),
 }
 
 impl Response {
@@ -65,7 +65,7 @@ impl Response {
         match self {
             Response::Handshake(resp) => resp.advice.clone(),
             Response::Publish(resp) => resp.advice.clone(),
-            Response::Connect(resp) => resp.advice.clone(),
+            Response::Basic(resp) => resp.advice.clone(),
         }
     }
 }
