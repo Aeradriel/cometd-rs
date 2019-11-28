@@ -282,4 +282,19 @@ impl Client {
             None => Err(Error::new("No client id set for subscribe")),
         }
     }
+
+    pub fn unsubscribe(&mut self, subscription: &str) -> Result<Vec<Response>, Error> {
+        match &self.client_id {
+            Some(client_id) => {
+                let resp = self.send_request(&SubscribeTopicPayload {
+                    channel: "/meta/unsubscribe",
+                    client_id,
+                    subscription,
+                })?;
+
+                self.handle_response(resp)
+            }
+            None => Err(Error::new("No client id set for unsubscribe")),
+        }
+    }
 }
