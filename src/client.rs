@@ -2,10 +2,9 @@ use reqwest::{Client as ReqwestClient, Response as ReqwestReponse, Url};
 use serde::Serialize;
 use std::time::Duration;
 
-use crate::advice::Reconnect;
+use crate::advice::{Advice, Reconnect};
 use crate::config::{COMETD_SUPPORTED_TYPES, COMETD_VERSION};
 use crate::error::Error;
-use crate::request::Request;
 use crate::response::{ErroredResponse, Response};
 
 pub struct Client {
@@ -14,7 +13,8 @@ pub struct Client {
     access_token: String,
     client_id: Option<String>,
     cookies: Vec<String>,
-    retries: i8,
+    max_retries: i8,
+    actual_retries: i8,
 }
 
 #[derive(Serialize)]
@@ -52,19 +52,20 @@ impl Client {
 
         log::info!("Successfully created cometd client");
         Ok(Client {
-            http_client: http_client,
+            http_client,
             base_url: url,
             access_token: access_token.to_owned(),
             client_id: None,
             cookies: vec![],
-            retries: 1,
+            actual_retries: 0,
+            max_retries: 1,
         })
     }
 
     /// Sets the number of retries the client will attempt in case of an error is
     /// returned by the cometd server.
     pub fn set_retries(mut self, retries: i8) -> Self {
-        self.retries = retries;
+        self.max_retries = retries;
         self
     }
 
@@ -79,58 +80,101 @@ impl Client {
             req = req.header(reqwest::header::SET_COOKIE, cookie.clone());
         }
 
-        log::info!(
-            "Sending request to cometd with the following body:\n{:#?}",
+        log::debug!(
+            "Sending request to cometd with the following body: {:?}",
             serde_json::to_string(body)
         );
         req.send()
             .map_err(|_| Error::new("Could not send request to server"))
     }
 
-    fn retry(&mut self, resp: &ErroredResponse, retry: i8) -> Result<Vec<Response>, Error> {
-        let req: Request = resp.into();
-        let resp = self.send_request(&req)?;
+    // TODO: Allow disable retry
+    fn retry(&mut self) -> Result<Vec<Response>, Error> {
+        self.actual_retries += 1;
+        log::debug!("Attempt n°{}", self.actual_retries);
 
-        log::info!("Retrying attempt n°{} for {:#?}", retry + 1, req);
-        self.handle_response(resp, retry + 1)
+        match &self.client_id {
+            Some(client_id) => {
+                let resp = self.send_request(&ConnectPayload {
+                    channel: "/meta/connect",
+                    client_id: &client_id,
+                    connection_type: "long-polling",
+                })?;
+
+                self.handle_response(resp)
+            }
+            None => Err(Error::new("No client id set for connect")),
+        }
+    }
+
+    fn retry_handshake(&mut self) -> Result<Vec<Response>, Error> {
+        self.actual_retries += 1;
+        log::debug!("Attempt n°{}", self.actual_retries);
+
+        let resp = self.send_request(&HandshakePayload {
+            channel: "/meta/handshake",
+            version: COMETD_VERSION,
+            supported_connection_types: COMETD_SUPPORTED_TYPES.to_vec(),
+        })?;
+
+        self.handle_response(resp)
+    }
+
+    fn handle_advice(
+        &mut self,
+        advice: &Advice,
+        error: Option<&str>,
+    ) -> Result<Vec<Response>, Error> {
+        log::debug!("Following advice from server");
+        match advice.reconnect {
+            Reconnect::Handshake => {
+                if self.actual_retries < self.max_retries {
+                    match self.retry_handshake() {
+                        Ok(_) => match self.retry() {
+                            Ok(resps) => Ok(resps),
+                            Err(err) => Err(err),
+                        },
+                        Err(err) => Err(err),
+                    }
+                } else {
+                    Err(Error::new(error.unwrap_or("Max retries reached")))
+                }
+            }
+            Reconnect::Retry => {
+                if self.actual_retries < self.max_retries {
+                    match self.retry() {
+                        Ok(resps) => Ok(resps),
+                        Err(err) => Err(err),
+                    }
+                } else {
+                    Err(Error::new(error.unwrap_or("Max retries reached")))
+                }
+            }
+            Reconnect::None => {
+                log::debug!(
+                    "Not retrying because the server answered not to reconnect nor handshake"
+                );
+                Err(Error::new(error.unwrap_or(
+                    "Service advised not to reconnect nor handshake",
+                )))
+            }
+        }
     }
 
     /// Handles the error returned by the cometd server. If possible, it will
     /// automatically retry according to the client configuration. If it still
     /// fails after the retries, the original error will be returned.
-    fn handle_error(&mut self, resp: &ErroredResponse, retry: i8) -> Result<Vec<Response>, Error> {
+    fn handle_error(&mut self, resp: &ErroredResponse) -> Result<Vec<Response>, Error> {
         match resp.advice {
-            Some(ref advice) => {
-                match advice.reconnect {
-                    // TODO: Make retry and hanshake act differently
-                    Reconnect::Retry | Reconnect::Handshake => {
-                        if retry < self.retries {
-                            match self.retry(resp, retry) {
-                                Ok(resps) => Ok(resps),
-                                Err(err) => Err(err),
-                            }
-                        } else {
-                            Err(Error::new(&resp.error))
-                        }
-                    }
-                    Reconnect::None => {
-                        log::info!("Not retrying because the server answered not to reconnect nor handshake");
-                        Err(Error::new(&resp.error))
-                    }
-                }
-            }
+            Some(ref advice) => self.handle_advice(advice, Some(&resp.error)),
             None => {
-                log::info!("Not retrying because the server did not provide advice");
+                log::debug!("Not retrying because the server did not provide advice");
                 Err(Error::new(&resp.error))
             }
         }
     }
 
-    fn handle_response(
-        &mut self,
-        mut resp: ReqwestReponse,
-        retry: i8,
-    ) -> Result<Vec<Response>, Error> {
+    fn handle_response(&mut self, mut resp: ReqwestReponse) -> Result<Vec<Response>, Error> {
         let body = resp
             .text()
             .map_err(|_| Error::new("Could not get the response body"))?;
@@ -140,11 +184,11 @@ impl Client {
             .collect::<Vec<_>>();
         let mut responses = vec![];
 
-        log::info!("Received response from cometd server:\n{:#?}", body);
+        log::debug!("Received response from cometd server: {:?}", body);
         match serde_json::from_str::<Vec<ErroredResponse>>(&body) {
             Ok(resps) => {
                 for resp in resps.into_iter() {
-                    let resps = self.handle_error(&resp, retry)?;
+                    let resps = self.handle_error(&resp)?;
 
                     for resp in resps.into_iter() {
                         responses.push(resp);
@@ -157,17 +201,23 @@ impl Client {
                     let mut responses = vec![];
 
                     for resp in resps.into_iter() {
-                        if let Response::Handshake(ref resp) = resp {
-                            self.client_id = Some(resp.client_id.clone());
-                            self.cookies = cookies.clone();
+                        if let Some(ref advice) = resp.advice() {
+                            for resp in self.handle_advice(advice, None)? {
+                                responses.push(resp);
+                            }
+                        } else {
+                            if let Response::Handshake(ref resp) = resp {
+                                self.client_id = Some(resp.client_id.clone());
+                                self.cookies = cookies.clone();
+                            }
+                            responses.push(resp);
                         }
-                        responses.push(resp);
                     }
                     Ok(responses)
                 }
                 Err(_) => {
                     log::error!(
-                        "Handle response failed with the following server response:\n{:#?}",
+                        "Handle response failed with the following server response: {:?}",
                         body
                     );
                     Err(Error::new("Could not parse response"))
@@ -177,49 +227,36 @@ impl Client {
     }
 
     fn handshake(&mut self) -> Result<Vec<Response>, Error> {
-        let resp = self.send_request(&HandshakePayload {
-            channel: "/meta/handshake",
-            version: COMETD_VERSION,
-            supported_connection_types: COMETD_SUPPORTED_TYPES.to_vec(),
-        })?;
+        let resps = self.retry_handshake();
 
-        self.handle_response(resp, 0)
+        self.actual_retries = 0;
+        resps
     }
 
     pub fn connect(&mut self) -> Result<Vec<Response>, Error> {
-        match &self.client_id {
-            Some(client_id) => {
-                let resp = self.send_request(&ConnectPayload {
-                    channel: "/meta/connect",
-                    client_id: &client_id,
-                    connection_type: "long-polling",
-                })?;
+        let resps = self.retry();
 
-                self.handle_response(resp, 0)
-            }
-            None => Err(Error::new("No client id set for connect")),
-        }
+        self.actual_retries = 0;
+        resps
     }
 
     pub fn init(&mut self) -> Result<Vec<Response>, Error> {
-        let mut responses = vec![];
+        let resps = self.handshake()?;
 
-        responses.push(self.handshake()?);
-        responses.push(self.connect()?);
         log::info!("Successfully init cometd client");
-        Ok(responses.into_iter().flatten().collect())
+        Ok(resps)
     }
 
-    pub fn subscribe(&mut self, sub: &str) -> Result<Vec<Response>, Error> {
+    pub fn subscribe(&mut self, subscription: &str) -> Result<Vec<Response>, Error> {
         match &self.client_id {
             Some(client_id) => {
                 let resp = self.send_request(&SubscribeTopicPayload {
                     channel: "/meta/subscribe",
-                    client_id: client_id,
-                    subscription: sub,
+                    client_id,
+                    subscription,
                 })?;
 
-                self.handle_response(resp, 0)
+                self.handle_response(resp)
             }
             None => Err(Error::new("No client id set for subscribe")),
         }

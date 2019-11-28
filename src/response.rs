@@ -1,8 +1,6 @@
 use serde::Deserialize;
 
 use crate::advice::Advice;
-use crate::config::{COMETD_SUPPORTED_TYPES, COMETD_VERSION};
-use crate::request::Request;
 
 #[derive(Deserialize, PartialEq, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -62,21 +60,12 @@ pub enum Response {
     Connect(ConnectResponse),
 }
 
-impl Into<Request> for &ErroredResponse {
-    fn into(self) -> Request {
-        Request {
-            channel: self.channel.clone(),
-            version: COMETD_VERSION.to_owned(),
-            minimum_version: None,
-            supported_connection_types: COMETD_SUPPORTED_TYPES
-                .to_vec()
-                .into_iter()
-                .map(|ct| ct.to_owned())
-                .collect(),
-            ext: self.ext.clone(),
-            id: self.id.clone(),
-            subscription: self.subscription.clone(),
-            client_id: self.client_id.clone(),
+impl Response {
+    pub fn advice(&self) -> Option<Advice> {
+        match self {
+            Response::Handshake(resp) => resp.advice.clone(),
+            Response::Publish(resp) => resp.advice.clone(),
+            Response::Connect(resp) => resp.advice.clone(),
         }
     }
 }
