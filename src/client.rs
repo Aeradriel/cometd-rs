@@ -106,7 +106,6 @@ impl Client {
             .map_err(|_| Error::new("Could not send request to server"))
     }
 
-    // TODO: Allow disable retry
     fn retry(&mut self) -> Result<Vec<Response>, Error> {
         self.actual_retries += 1;
         log::debug!("Attempt n°{}", self.actual_retries);

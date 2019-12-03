@@ -11,3 +11,6 @@ reqwest = "0.9.22"
 serde = "1.0.103"
 serde_json = "1.0.42"
 log = "0.4.8"
+
+[dev-dependencies]
+mockito = "0.22.0"
