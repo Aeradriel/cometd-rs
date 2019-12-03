@@ -48,6 +48,17 @@ struct SubscribeTopicPayload<'a> {
     pub subscription: &'a str,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PublishPayload<'a, T>
+where
+    T: Serialize,
+{
+    pub channel: &'a str,
+    pub client_id: &'a str,
+    pub data: T,
+}
+
 impl Client {
     pub fn new(base_url: &str, access_token: &str, timeout: Duration) -> Result<Client, Error> {
         let url = Url::parse(base_url).map_err(|_| Error::new("Could not parse base url"))?;
@@ -290,6 +301,21 @@ impl Client {
                     channel: "/meta/unsubscribe",
                     client_id,
                     subscription,
+                })?;
+
+                self.handle_response(resp)
+            }
+            None => Err(Error::new("No client id set for unsubscribe")),
+        }
+    }
+
+    pub fn publish(&mut self, channel: &str, data: impl Serialize) -> Result<Vec<Response>, Error> {
+        match &self.client_id {
+            Some(client_id) => {
+                let resp = self.send_request(&PublishPayload {
+                    channel,
+                    client_id,
+                    data,
                 })?;
 
                 self.handle_response(resp)
