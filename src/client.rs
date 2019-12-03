@@ -145,7 +145,7 @@ impl Client {
         log::debug!("Following advice from server");
         match advice.reconnect {
             Reconnect::Handshake => {
-                if self.actual_retries < self.max_retries {
+                if self.actual_retries <= self.max_retries {
                     match self.retry_handshake() {
                         Ok(_) => match self.retry() {
                             Ok(resps) => Ok(resps),
@@ -158,7 +158,7 @@ impl Client {
                 }
             }
             Reconnect::Retry => {
-                if self.actual_retries < self.max_retries {
+                if self.actual_retries <= self.max_retries {
                     match self.retry() {
                         Ok(resps) => Ok(resps),
                         Err(err) => Err(err),
