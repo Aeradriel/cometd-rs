@@ -3,7 +3,7 @@ name = "cometd"
 description = "Cometd implementation in Rust"
 license = "MIT"
 repository = "https://github.com/Aeradriel/cometd-rs.git"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Thibaut Roche <thibaut.roche.perso@gmail.com>"]
 edition = "2018"
 
