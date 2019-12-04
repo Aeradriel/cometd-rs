@@ -45,11 +45,24 @@ pub struct ErroredResponse {
 #[derive(Deserialize, PartialEq, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct PublishResponse {
+    pub channel: String,
     pub client_id: String,
     pub successful: bool,
     pub error: Option<String>,
     pub advice: Option<Advice>,
+    pub ext: Option<serde_json::Value>,
     pub data: serde_json::Value,
+    pub id: Option<String>,
+}
+
+#[derive(Deserialize, PartialEq, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct DeliveryResponse {
+    pub channel: String,
+    pub advice: Option<Advice>,
+    pub data: serde_json::Value,
+    pub ext: Option<serde_json::Value>,
+    pub id: Option<String>,
 }
 
 #[derive(Deserialize, PartialEq, Debug)]
@@ -57,6 +70,7 @@ pub struct PublishResponse {
 pub enum Response {
     Handshake(HandshakeResponse),
     Publish(PublishResponse),
+    Delivery(DeliveryResponse),
     Basic(BasicResponse),
 }
 
@@ -65,6 +79,7 @@ impl Response {
         match self {
             Response::Handshake(resp) => resp.advice.clone(),
             Response::Publish(resp) => resp.advice.clone(),
+            Response::Delivery(resp) => resp.advice.clone(),
             Response::Basic(resp) => resp.advice.clone(),
         }
     }
