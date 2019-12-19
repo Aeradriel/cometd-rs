@@ -7,6 +7,7 @@ use crate::config::{COMETD_SUPPORTED_TYPES, COMETD_VERSION};
 use crate::error::Error;
 use crate::response::{ErroredResponse, Response};
 
+/// The cometd client.
 pub struct Client {
     http_client: ReqwestClient,
     base_url: Url,
@@ -60,6 +61,12 @@ where
 }
 
 impl Client {
+    /// Creates a new cometd client. It is expected to provide the url of the cometd server,
+    /// the access token to allow the communication and the timeout for long-polling requests.
+    ///
+    /// # Errors
+    ///
+    /// Will return an error if the http client cannot be initalized.
     pub fn new(base_url: &str, access_token: &str, timeout: Duration) -> Result<Client, Error> {
         let url = Url::parse(base_url).map_err(|_| Error::new("Could not parse base url"))?;
         let http_client = ReqwestClient::builder()
@@ -80,7 +87,7 @@ impl Client {
         })
     }
 
-    /// Sets the number of retries the client will attempt in case of an error is
+    /// Sets the number of retries the client will attempt in case of an error or a retry advice is
     /// returned by the cometd server.
     pub fn set_retries(mut self, retries: i8) -> Self {
         self.max_retries = retries;
@@ -250,6 +257,19 @@ impl Client {
         resps
     }
 
+    /// The cometd connect method. It will hang for a response from the server according
+    /// to the timeout provided to the cometd client.
+    /// If one or several sucess responses are returned to the request, it will return a `Vec`
+    /// containing those responses.
+    /// If an errored response is received but an advice is provided by the server, the client
+    /// will try to follow this advice and re-attemp the connection. If the maximum number of retries
+    /// is reached and the response still does not succeed, it will return an error.
+    ///
+    /// # Errors
+    ///
+    /// The cometd server's response could not be parsed.
+    /// The cometd server returned a response that indicated an error and the request could not be
+    /// retried or the maximum number of retries has been reached.
     pub fn connect(&mut self) -> Result<Vec<Response>, Error> {
         let resps = self.retry();
 
@@ -257,6 +277,15 @@ impl Client {
         resps
     }
 
+    /// The cometd disconnect method.
+    /// If one or several sucess responses are returned to the request, it will return a `Vec`
+    /// containing those responses.
+    ///
+    /// # Errors
+    ///
+    /// The cometd server's response could not be parsed.
+    /// The cometd server returned a response that indicated an error and the request could not be
+    /// retried or the maximum number of retries has been reached.
     pub fn disconnect(&mut self) -> Result<Vec<Response>, Error> {
         match &self.client_id {
             Some(client_id) => {
@@ -271,6 +300,8 @@ impl Client {
         }
     }
 
+    /// Init the cometd client. It will attempt to establish a handshake between
+    /// the client and the server so it can make further requests.
     pub fn init(&mut self) -> Result<Vec<Response>, Error> {
         let resps = self.handshake()?;
 
@@ -278,6 +309,19 @@ impl Client {
         Ok(resps)
     }
 
+    /// The cometd subscribe method. It will ask the server to subscribe to a certain channel and therefore
+    /// be updated when something is posted on this channel.
+    /// If one or several sucess responses are returned to the request, it will return a `Vec`
+    /// containing those responses.
+    /// If an errored response is received but an advice is provided by the server, the client
+    /// will try to follow this advice and re-attemp the connection. If the maximum number of retries
+    /// is reached and the response still does not succeed, it will return an error.
+    ///
+    /// # Errors
+    ///
+    /// The cometd server's response could not be parsed.
+    /// The cometd server returned a response that indicated an error and the request could not be
+    /// retried or the maximum number of retries has been reached.
     pub fn subscribe(&mut self, subscription: &str) -> Result<Vec<Response>, Error> {
         match &self.client_id {
             Some(client_id) => {
@@ -293,6 +337,19 @@ impl Client {
         }
     }
 
+    /// The cometd subscribe method. It will ask the server to unsubscribe from a certain channel and therefore
+    /// strop being updated when something is posted on this channel.
+    /// If one or several sucess responses are returned to the request, it will return a `Vec`
+    /// containing those responses.
+    /// If an errored response is received but an advice is provided by the server, the client
+    /// will try to follow this advice and re-attemp the connection. If the maximum number of retries
+    /// is reached and the response still does not succeed, it will return an error.
+    ///
+    /// # Errors
+    ///
+    /// The cometd server's response could not be parsed.
+    /// The cometd server returned a response that indicated an error and the request could not be
+    /// retried or the maximum number of retries has been reached.
     pub fn unsubscribe(&mut self, subscription: &str) -> Result<Vec<Response>, Error> {
         match &self.client_id {
             Some(client_id) => {
@@ -308,6 +365,18 @@ impl Client {
         }
     }
 
+    /// The cometd plublish method. It will ask the server to publish a message to a certain channel.
+    /// If one or several sucess responses are returned to the request, it will return a `Vec`
+    /// containing those responses.
+    /// If an errored response is received but an advice is provided by the server, the client
+    /// will try to follow this advice and re-attemp the connection. If the maximum number of retries
+    /// is reached and the response still does not succeed, it will return an error.
+    ///
+    /// # Errors
+    ///
+    /// The cometd server's response could not be parsed.
+    /// The cometd server returned a response that indicated an error and the request could not be
+    /// retried or the maximum number of retries has been reached.
     pub fn publish(&mut self, channel: &str, data: impl Serialize) -> Result<Vec<Response>, Error> {
         match &self.client_id {
             Some(client_id) => {

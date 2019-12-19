@@ -1,3 +1,5 @@
+/// Represents an error. Every time an error is created through
+/// the [`new`](Error::new) function. It will log an error.
 #[derive(Debug)]
 pub struct Error {
     pub message: String,

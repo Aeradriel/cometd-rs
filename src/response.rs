@@ -2,6 +2,8 @@ use serde::Deserialize;
 
 use crate::advice::Advice;
 
+/// This response is the basic reponse for any that does not match the other
+/// field of this enum.
 #[derive(Deserialize, PartialEq, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct BasicResponse {
@@ -14,6 +16,7 @@ pub struct BasicResponse {
     pub id: Option<String>,
 }
 
+/// This response is returned upon a successful handshake request.
 #[derive(Deserialize, PartialEq, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct HandshakeResponse {
@@ -29,6 +32,8 @@ pub struct HandshakeResponse {
     pub auth_successful: Option<bool>,
 }
 
+/// Represents an errored response from the cometd server. If an advice is provided,
+/// the client might automatically retry the request.
 #[derive(Deserialize, PartialEq, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ErroredResponse {
@@ -42,6 +47,7 @@ pub struct ErroredResponse {
     pub id: Option<String>,
 }
 
+/// This response is returned upon a successful publish request.
 #[derive(Deserialize, PartialEq, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct PublishResponse {
@@ -55,6 +61,8 @@ pub struct PublishResponse {
     pub id: Option<String>,
 }
 
+/// This response is returned when a message is send to a channel the client
+/// is subscribed to.
 #[derive(Deserialize, PartialEq, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct DeliveryResponse {
@@ -65,16 +73,24 @@ pub struct DeliveryResponse {
     pub id: Option<String>,
 }
 
+/// Represents a response from the cometd server.
 #[derive(Deserialize, PartialEq, Debug)]
 #[serde(untagged)]
 pub enum Response {
+    /// This response is returned upon a successful handshake request.
     Handshake(HandshakeResponse),
+    /// This response is returned upon a successful publish request.
     Publish(PublishResponse),
+    /// This response is returned when a message is send to a channel the client
+    /// is subscribed to.
     Delivery(DeliveryResponse),
+    /// This response is the basic reponse for any that does not match the other
+    /// field of this enum.
     Basic(BasicResponse),
 }
 
 impl Response {
+    /// Returns an [Advice](Advice) if the server returned one.
     pub fn advice(&self) -> Option<Advice> {
         match self {
             Response::Handshake(resp) => resp.advice.clone(),
