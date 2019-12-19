@@ -154,10 +154,7 @@ impl Client {
             Reconnect::Handshake => {
                 if self.actual_retries <= self.max_retries {
                     match self.retry_handshake() {
-                        Ok(_) => match self.retry() {
-                            Ok(resps) => Ok(resps),
-                            Err(err) => Err(err),
-                        },
+                        Ok(_) => self.retry(),
                         Err(err) => Err(err),
                     }
                 } else {
@@ -166,10 +163,7 @@ impl Client {
             }
             Reconnect::Retry => {
                 if self.actual_retries <= self.max_retries {
-                    match self.retry() {
-                        Ok(resps) => Ok(resps),
-                        Err(err) => Err(err),
-                    }
+                    self.retry()
                 } else {
                     Err(Error::new(error.unwrap_or("Max retries reached")))
                 }
